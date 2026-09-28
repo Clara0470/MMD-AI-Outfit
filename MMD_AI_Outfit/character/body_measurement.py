@@ -1,40 +1,101 @@
-"""Body measurements for standard MMD armatures."""
+"""Body measurements for standard and extended MMD armatures."""
 
 
 BONE_NAMES = {
     "head": ("頭", "head"),
     "neck": ("首", "neck"),
-    "left_shoulder": ("左肩", "shoulder_l", "shoulder.l", "left_shoulder"),
-    "right_shoulder": ("右肩", "shoulder_r", "shoulder.r", "right_shoulder"),
-    "left_arm": ("左腕", "arm_l", "arm.l", "left_arm"),
-    "right_arm": ("右腕", "arm_r", "arm.r", "right_arm"),
-    "left_elbow": ("左ひじ", "左肘", "elbow_l", "elbow.l", "left_elbow"),
-    "right_elbow": ("右ひじ", "右肘", "elbow_r", "elbow.r", "right_elbow"),
-    "left_wrist": ("左手首", "wrist_l", "wrist.l", "left_wrist"),
-    "right_wrist": ("右手首", "wrist_r", "wrist.r", "right_wrist"),
-    "left_leg": ("左足", "thigh_l", "thigh.l", "upper_leg_l", "left_leg"),
-    "right_leg": ("右足", "thigh_r", "thigh.r", "upper_leg_r", "right_leg"),
-    "left_knee": ("左ひざ", "左膝", "knee_l", "knee.l", "left_knee"),
-    "right_knee": ("右ひざ", "右膝", "knee_r", "knee.r", "right_knee"),
-    "left_ankle": ("左足首", "ankle_l", "ankle.l", "left_ankle"),
-    "right_ankle": ("右足首", "ankle_r", "ankle.r", "right_ankle"),
-    "left_toe": ("左つま先", "左爪先", "toe_l", "toe.l", "left_toe"),
-    "right_toe": ("右つま先", "右爪先", "toe_r", "toe.r", "right_toe"),
+    "left_arm": (
+        "左腕", "左上腕", "左腕上", "左腕1", "upperarm.l", "upper_arm.l",
+        "arm_upper.l", "upperarm_l", "upper_arm_l", "arm_l", "arm.l", "left_upper_arm", "left_arm",
+    ),
+    "right_arm": (
+        "右腕", "右上腕", "右腕上", "右腕1", "upperarm.r", "upper_arm.r",
+        "arm_upper.r", "upperarm_r", "upper_arm_r", "arm_r", "arm.r", "right_upper_arm", "right_arm",
+    ),
+    "left_elbow": (
+        "左ひじ", "左肘", "左前腕", "forearm.l", "lowerarm.l", "lower_arm.l",
+        "elbow.l", "forearm_l", "lowerarm_l", "lower_arm_l", "elbow_l", "left_forearm", "left_elbow",
+    ),
+    "right_elbow": (
+        "右ひじ", "右肘", "右前腕", "forearm.r", "lowerarm.r", "lower_arm.r",
+        "elbow.r", "forearm_r", "lowerarm_r", "lower_arm_r", "elbow_r", "right_forearm", "right_elbow",
+    ),
+    "left_wrist": ("左手首", "手首.l", "wrist.l", "hand.l", "wrist_l", "left_wrist"),
+    "right_wrist": ("右手首", "手首.r", "wrist.r", "hand.r", "wrist_r", "right_wrist"),
+    "left_leg": ("左足", "左脚", "左股", "thigh.l", "upper_leg.l", "thigh_l", "upper_leg_l", "left_leg"),
+    "right_leg": ("右足", "右脚", "右股", "thigh.r", "upper_leg.r", "thigh_r", "upper_leg_r", "right_leg"),
+    "left_knee": ("左ひざ", "左膝", "左すね", "knee.l", "shin.l", "lower_leg.l", "knee_l", "left_knee"),
+    "right_knee": ("右ひざ", "右膝", "右すね", "knee.r", "shin.r", "lower_leg.r", "knee_r", "right_knee"),
+    "left_ankle": ("左足首", "ankle.l", "foot.l", "ankle_l", "left_ankle"),
+    "right_ankle": ("右足首", "ankle.r", "foot.r", "ankle_r", "right_ankle"),
+    "left_toe": ("左つま先", "左爪先", "toe.l", "toe_l", "left_toe"),
+    "right_toe": ("右つま先", "右爪先", "toe.r", "toe_r", "right_toe"),
     "waist": ("腰", "センター", "センタ", "waist", "hips", "pelvis"),
 }
 
 
+def _normalize(name):
+    """Normalize common Blender side suffixes and punctuation for comparison."""
+    return "".join(char.lower() for char in name if char.isalnum() or ord(char) > 127)
+
+
+def _bone_names(armature, bone):
+    names = [bone.name]
+    # MMD Tools can retain original PMX names on either the data or pose bone.
+    pose_bone = armature.pose.bones.get(bone.name)
+    for owner in (bone, pose_bone):
+        mmd_data = getattr(owner, "mmd_bone", None) if owner is not None else None
+        if mmd_data is not None:
+            for attr in ("name_j", "name_e"):
+                value = getattr(mmd_data, attr, "")
+                if value:
+                    names.append(value)
+    return names
+
+
+def _is_auxiliary(armature, bone):
+    markers = ("捩", "twist", "helper", "補助", "ik", "キャンセル")
+    return any(
+        _normalize(marker) in _normalize(name)
+        for name in _bone_names(armature, bone)
+        for marker in markers
+    )
+
 def _bone(armature, key):
-    for name in BONE_NAMES[key]:
-        bone = armature.data.bones.get(name)
-        if bone is not None:
-            return bone
-    # PMX imports sometimes append suffixes to Japanese bone names.
-    for name in BONE_NAMES[key]:
-        if any(ord(char) > 127 for char in name):
-            for bone in armature.data.bones:
-                if bone.name.startswith(name):
-                    return bone
+    bones = list(armature.data.bones)
+    aliases = BONE_NAMES[key]
+    normalized_aliases = [_normalize(name) for name in aliases]
+
+    # Prefer a literal base-bone name before normalized aliases, which may
+    # ignore suffix punctuation such as '+' and could otherwise pick a helper.
+    for alias in aliases:
+        for bone in bones:
+            if alias in _bone_names(armature, bone):
+                return bone
+
+    exact = []
+    for alias in normalized_aliases:
+        for bone in bones:
+            if any(_normalize(name) == alias for name in _bone_names(armature, bone)):
+                exact.append(bone)
+    if exact:
+        return min(exact, key=lambda item: (_is_auxiliary(armature, item), len(_normalize(item.name))))
+
+    # MMD models commonly add suffixes such as '+' or digits. Match Japanese
+    # prefixes and Blender-style side suffixes, while excluding helper/twist
+    # bones so a split arm does not resolve to a twist segment by accident.
+    for alias in normalized_aliases:
+        candidates = []
+        for bone in bones:
+            if _is_auxiliary(armature, bone):
+                continue
+            for name in _bone_names(armature, bone):
+                normalized = _normalize(name)
+                if normalized.startswith(alias) or normalized.endswith(alias):
+                    candidates.append(bone)
+                    break
+        if candidates:
+            return min(candidates, key=lambda item: len(_normalize(item.name)))
     return None
 
 
@@ -49,7 +110,8 @@ def _distance(a, b):
 def _required(armature, key):
     bone = _bone(armature, key)
     if bone is None:
-        raise ValueError("必須ボーンが見つかりません: " + ", ".join(BONE_NAMES[key][:2]))
+        choices = ", ".join(BONE_NAMES[key][:4])
+        raise ValueError(f"必須ボーンが見つかりません: {choices} など")
     return bone
 
 
@@ -95,3 +157,6 @@ def measure_body(armature):
     if any(value <= 0 or value == float("inf") or value != value for value in values.values()):
         raise ValueError("ボーン位置から有効な測定値を計算できません。ボーン配置を確認してください")
     return values
+
+
+
